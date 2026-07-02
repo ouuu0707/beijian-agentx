@@ -6,10 +6,10 @@ compatibility_date = "2024-09-23"
 [ai]
 binding = "AI"
 
-# Vectorize 向量数据库绑定
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "spare-parts-index"
+# TODO: Vectorize 未配置时暂不绑定，配置后恢复下方注释代码
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "spare-parts-index"
 
 # TODO: KV 未配置时暂不绑定，配置后恢复下方注释代码
 # [[kv_namespaces]]
