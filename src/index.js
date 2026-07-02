@@ -177,28 +177,30 @@ function getModelParams(question) {
 }
 
 // ---------- 限流器（基于 KV 的滑动窗口） ----------
+// TODO: KV 未配置时暂不限流，配置后恢复下方注释代码
 async function checkRateLimit(request, env) {
-  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-  const key = `rate:${ip}`;
-  const now = Math.floor(Date.now() / 1000);
-
-  const raw = await env.QA_CACHE.get(key);
-  const timestamps = raw ? JSON.parse(raw) : [];
-
-  // 过滤窗口外的时间戳
-  const windowStart = now - RATE_LIMIT.WINDOW_SECONDS;
-  const recent = timestamps.filter((t) => t > windowStart);
-
-  if (recent.length >= RATE_LIMIT.MAX_REQUESTS_PER_MINUTE) {
-    return false;
-  }
-
-  // 记录本次请求
-  recent.push(now);
-  await env.QA_CACHE.put(key, JSON.stringify(recent), {
-    expirationTtl: RATE_LIMIT.WINDOW_SECONDS + 10,
-  });
   return true;
+  // const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  // const key = `rate:${ip}`;
+  // const now = Math.floor(Date.now() / 1000);
+  //
+  // const raw = await env.QA_CACHE.get(key);
+  // const timestamps = raw ? JSON.parse(raw) : [];
+  //
+  // // 过滤窗口外的时间戳
+  // const windowStart = now - RATE_LIMIT.WINDOW_SECONDS;
+  // const recent = timestamps.filter((t) => t > windowStart);
+  //
+  // if (recent.length >= RATE_LIMIT.MAX_REQUESTS_PER_MINUTE) {
+  //   return false;
+  // }
+  //
+  // // 记录本次请求
+  // recent.push(now);
+  // await env.QA_CACHE.put(key, JSON.stringify(recent), {
+  //   expirationTtl: RATE_LIMIT.WINDOW_SECONDS + 10,
+  // });
+  // return true;
 }
 
 // ---------- 优化后的 Prompt ----------
@@ -242,160 +244,141 @@ function extractStructuredAnswer(answer, topMatch) {
 }
 
 // ---------- /ingest：向量化知识库并写入 Vectorize ----------
+// TODO: Vectorize 未配置时暂不可用，配置后恢复下方注释代码
 async function handleIngest(env) {
-  const { embed } = getModels(env);
-  const texts = KNOWLEDGE_BASE.map(toSearchableText);
+  return jsonResponse({ error: 'Vectorize 未配置，暂不可用' }, 503);
 
-  // 尝试从 KV 缓存读取向量
-  const cacheKey = `vectors:${embed}:${KNOWLEDGE_BASE.length}`;
-  const cached = await env.VECTOR_CACHE.get(cacheKey, 'json');
-
-  let vectors;
-  if (cached && cached.length === KNOWLEDGE_BASE.length) {
-    // 使用缓存的向量
-    vectors = KNOWLEDGE_BASE.map((item, i) => ({
-      id: item.id,
-      values: cached[i],
-      metadata: {
-        equipment: item.equipment,
-        fault: item.fault,
-        spare_part: item.spare_part,
-        part_no: item.part_no,
-        spec: item.spec,
-        suggestion: item.suggestion,
-      },
-    }));
-  } else {
-    // 调用嵌入模型生成向量
-    const { data } = await env.AI.run(embed, { text: texts });
-
-    vectors = KNOWLEDGE_BASE.map((item, i) => ({
-      id: item.id,
-      values: data[i],
-      metadata: {
-        equipment: item.equipment,
-        fault: item.fault,
-        spare_part: item.spare_part,
-        part_no: item.part_no,
-        spec: item.spec,
-        suggestion: item.suggestion,
-      },
-    }));
-
-    // 缓存向量结果到 KV
-    await env.VECTOR_CACHE.put(cacheKey, JSON.stringify(data), {
-      expirationTtl: 86400, // 缓存 24 小时
-    });
-  }
-
-  await env.VECTORIZE.upsert(vectors);
-
-  return jsonResponse({
-    success: true,
-    ingested: vectors.length,
-    cached: !!cached,
-    message: `已成功向量化 ${vectors.length} 条打印机备件知识并写入 Vectorize${cached ? '（命中向量缓存）' : ''}`,
-  });
+  // const { embed } = getModels(env);
+  // const texts = KNOWLEDGE_BASE.map(toSearchableText);
+  //
+  // const { data } = await env.AI.run(embed, { text: texts });
+  //
+  // const vectors = KNOWLEDGE_BASE.map((item, i) => ({
+  //   id: item.id,
+  //   values: data[i],
+  //   metadata: {
+  //     equipment: item.equipment,
+  //     fault: item.fault,
+  //     spare_part: item.spare_part,
+  //     part_no: item.part_no,
+  //     spec: item.spec,
+  //     suggestion: item.suggestion,
+  //   },
+  // }));
+  //
+  // await env.VECTORIZE.upsert(vectors);
+  //
+  // return jsonResponse({
+  //   success: true,
+  //   ingested: vectors.length,
+  //   cached: false,
+  //   message: `已成功向量化 ${vectors.length} 条打印机备件知识并写入 Vectorize`,
+  // });
 }
 
 // ---------- /ask：检索 + 生成（单条） ----------
 async function askSingle(question, env, sessionId = null) {
   const { embed, chat } = getModels(env);
 
-  // 1. 检查问答缓存（问题哈希 → 缓存结果）
-  const cacheKey = `qa:${question}`;
-  const cachedResult = await env.QA_CACHE.get(cacheKey, 'json');
-  if (cachedResult) {
-    return { ...cachedResult, cached: true };
-  }
+  // TODO: KV 未配置时跳过问答缓存，配置后恢复下方注释代码
+  // // 1. 检查问答缓存（问题哈希 → 缓存结果）
+  // const cacheKey = `qa:${question}`;
+  // const cachedResult = await env.QA_CACHE.get(cacheKey, 'json');
+  // if (cachedResult) {
+  //   return { ...cachedResult, cached: true };
+  // }
 
-  // 2. 将问题向量化
-  const { data: questionVectors } = await env.AI.run(embed, {
-    text: [question],
-  });
+  // TODO: Vectorize 未配置时暂不可用，配置后恢复下方注释代码
+  return { answer: 'Vectorize 未配置，暂不可用', structured_answer: null, sources: [] };
 
-  // 3. 在 Vectorize 中检索最相关的 Top-5 条目
-  const { matches } = await env.VECTORIZE.query(questionVectors[0], {
-    topK: 5,
-    returnMetadata: 'all',
-  });
+  // // 2. 将问题向量化
+  // const { data: questionVectors } = await env.AI.run(embed, {
+  //   text: [question],
+  // });
+  //
+  // // 3. 在 Vectorize 中检索最相关的 Top-5 条目
+  // const { matches } = await env.VECTORIZE.query(questionVectors[0], {
+  //   topK: 5,
+  //   returnMetadata: 'all',
+  // });
 
-  if (!matches || matches.length === 0) {
-    const noMatch = {
-      answer: '未查询到相关备件，请联系设备工程师',
-      structured_answer: null,
-      sources: [],
-    };
-    await env.QA_CACHE.put(cacheKey, JSON.stringify(noMatch), {
-      expirationTtl: 3600,
-    });
-    return noMatch;
-  }
+  // // if (!matches || matches.length === 0) {
+  // //   // TODO: KV 未配置时跳过缓存写入
+  // //   // await env.QA_CACHE.put(cacheKey, JSON.stringify(noMatch), {
+  // //   //   expirationTtl: 3600,
+  // //   // });
+  // //   return {
+  // //     answer: '未查询到相关备件，请联系设备工程师',
+  // //     structured_answer: null,
+  // //     sources: [],
+  // //   };
+  // // }
+  //
+  // // 4. 拼接上下文
+  // const context = matches
+  //   .map((m, i) => {
+  //     const meta = m.metadata;
+  //     return `[${i + 1}] 设备：${meta.equipment} | 故障：${meta.fault} | 备件：${meta.spare_part} | 型号：${meta.part_no} | 规格：${meta.spec} | 建议：${meta.suggestion} (相似度: ${m.score.toFixed(4)})`;
+  //   })
+  //   .join('\n');
+  //
+  // // TODO: Durable Objects 未配置时跳过多轮对话历史，配置后恢复下方注释代码
+  // let history = [];
+  // // if (sessionId) {
+  // //   const id = env.CHAT_SESSION.idFromName(sessionId);
+  // //   const stub = env.CHAT_SESSION.get(id);
+  // //   const histRes = await stub.fetch('http://internal/history');
+  // //   history = await histRes.json();
+  // // }
+  //
+  // // 6. 构造 Prompt，调用对话模型
+  // const prompt = buildPrompt(context, question, history);
+  // const params = getModelParams(question);
+  //
+  // const { response: answer } = await env.AI.run(chat, {
+  //   messages: [{ role: 'user', content: prompt }],
+  //   ...params,
+  // });
+  //
+  // // 7. 提取结构化答案
+  // const structured_answer = extractStructuredAnswer(answer, matches[0]);
+  //
+  // // TODO: Durable Objects 未配置时跳过多轮对话存储，配置后恢复下方注释代码
+  // // if (sessionId) {
+  // //   const id = env.CHAT_SESSION.idFromName(sessionId);
+  // //   const stub = env.CHAT_SESSION.get(id);
+  // //   await stub.fetch('http://internal/add', {
+  // //     method: 'POST',
+  // //     headers: { 'Content-Type': 'application/json' },
+  // //     body: JSON.stringify({ role: 'user', content: question }),
+  // //   });
+  // //   await stub.fetch('http://internal/add', {
+  // //     method: 'POST',
+  // //     headers: { 'Content-Type': 'application/json' },
+  // //     body: JSON.stringify({ role: 'assistant', content: answer }),
+  // //   });
+  // // }
 
-  // 4. 拼接上下文
-  const context = matches
-    .map((m, i) => {
-      const meta = m.metadata;
-      return `[${i + 1}] 设备：${meta.equipment} | 故障：${meta.fault} | 备件：${meta.spare_part} | 型号：${meta.part_no} | 规格：${meta.spec} | 建议：${meta.suggestion} (相似度: ${m.score.toFixed(4)})`;
-    })
-    .join('\n');
-
-  // 5. 获取多轮对话历史
-  let history = [];
-  if (sessionId) {
-    const id = env.CHAT_SESSION.idFromName(sessionId);
-    const stub = env.CHAT_SESSION.get(id);
-    const histRes = await stub.fetch('http://internal/history');
-    history = await histRes.json();
-  }
-
-  // 6. 构造 Prompt，调用对话模型
-  const prompt = buildPrompt(context, question, history);
-  const params = getModelParams(question);
-
-  const { response: answer } = await env.AI.run(chat, {
-    messages: [{ role: 'user', content: prompt }],
-    ...params,
-  });
-
-  // 7. 提取结构化答案
-  const structured_answer = extractStructuredAnswer(answer, matches[0]);
-
-  // 8. 存入多轮对话历史
-  if (sessionId) {
-    const id = env.CHAT_SESSION.idFromName(sessionId);
-    const stub = env.CHAT_SESSION.get(id);
-    await stub.fetch('http://internal/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'user', content: question }),
-    });
-    await stub.fetch('http://internal/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'assistant', content: answer }),
-    });
-  }
-
-  // 9. 组装返回
-  const sources = matches.map((m) => ({
-    equipment: m.metadata.equipment,
-    fault: m.metadata.fault,
-    spare_part: m.metadata.spare_part,
-    part_no: m.metadata.part_no,
-    spec: m.metadata.spec,
-    suggestion: m.metadata.suggestion,
-    score: m.score,
-  }));
-
-  const result = { answer, structured_answer, sources, cached: false };
-
-  // 10. 写入问答缓存
-  await env.QA_CACHE.put(cacheKey, JSON.stringify(result), {
-    expirationTtl: 3600, // 缓存 1 小时
-  });
-
-  return result;
+  // // 9. 组装返回
+  // const sources = matches.map((m) => ({
+  //   equipment: m.metadata.equipment,
+  //   fault: m.metadata.fault,
+  //   spare_part: m.metadata.spare_part,
+  //   part_no: m.metadata.part_no,
+  //   spec: m.metadata.spec,
+  //   suggestion: m.metadata.suggestion,
+  //   score: m.score,
+  // }));
+  //
+  // const result = { answer, structured_answer, sources, cached: false };
+  //
+  // // TODO: KV 未配置时跳过缓存写入，配置后恢复下方注释代码
+  // // // 10. 写入问答缓存
+  // // await env.QA_CACHE.put(cacheKey, JSON.stringify(result), {
+  // //   expirationTtl: 3600, // 缓存 1 小时
+  // // });
+  //
+  // return result;
 }
 
 // ---------- /ask：路由处理 ----------
@@ -519,47 +502,48 @@ async function handleExportQaCsv(request, env) {
 
 // ============================================================
 // Durable Object: ChatSession（多轮对话状态管理）
+// TODO: Durable Objects 未配置时暂时禁用，配置后恢复下方注释代码
 // ============================================================
-export class ChatSession {
-  constructor(state) {
-    this.state = state;
-    this.history = [];
-  }
-
-  async fetch(request) {
-    const url = new URL(request.url);
-
-    // 获取对话历史
-    if (url.pathname === '/history') {
-      return new Response(JSON.stringify(this.history), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 追加对话消息
-    if (url.pathname === '/add' && request.method === 'POST') {
-      const msg = await request.json();
-      this.history.push(msg);
-      // 只保留最近 20 条上下文，防止 token 溢出
-      if (this.history.length > 20) {
-        this.history = this.history.slice(-20);
-      }
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 清空对话历史
-    if (url.pathname === '/clear') {
-      this.history = [];
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    return new Response('Not found', { status: 404 });
-  }
-}
+// export class ChatSession {
+//   constructor(state) {
+//     this.state = state;
+//     this.history = [];
+//   }
+//
+//   async fetch(request) {
+//     const url = new URL(request.url);
+//
+//     // 获取对话历史
+//     if (url.pathname === '/history') {
+//       return new Response(JSON.stringify(this.history), {
+//         headers: { 'Content-Type': 'application/json' },
+//       });
+//     }
+//
+//     // 追加对话消息
+//     if (url.pathname === '/add' && request.method === 'POST') {
+//       const msg = await request.json();
+//       this.history.push(msg);
+//       // 只保留最近 20 条上下文，防止 token 溢出
+//       if (this.history.length > 20) {
+//         this.history = this.history.slice(-20);
+//       }
+//       return new Response(JSON.stringify({ ok: true }), {
+//         headers: { 'Content-Type': 'application/json' },
+//       });
+//     }
+//
+//     // 清空对话历史
+//     if (url.pathname === '/clear') {
+//       this.history = [];
+//       return new Response(JSON.stringify({ ok: true }), {
+//         headers: { 'Content-Type': 'application/json' },
+//       });
+//     }
+//
+//     return new Response('Not found', { status: 404 });
+//   }
+// }
 
 // ============================================================
 // 主入口
@@ -601,22 +585,23 @@ export default {
         return await handleExportQaCsv(request, env);
       }
 
-      // 清空对话历史
-      if (url.pathname === '/chat/clear' && request.method === 'POST') {
-        let body;
-        try {
-          body = await request.json();
-        } catch {
-          return jsonResponse({ error: '请求体不是合法 JSON' }, 400);
-        }
-        const { session_id } = body;
-        if (!session_id) {
-          return jsonResponse({ error: '请提供 session_id' }, 400);
-        }
-        const id = env.CHAT_SESSION.idFromName(session_id);
-        const stub = env.CHAT_SESSION.get(id);
-        return await stub.fetch('http://internal/clear');
-      }
+      // TODO: Durable Objects 未配置时禁用此路由，配置后恢复下方注释代码
+      // // 清空对话历史
+      // if (url.pathname === '/chat/clear' && request.method === 'POST') {
+      //   let body;
+      //   try {
+      //     body = await request.json();
+      //   } catch {
+      //     return jsonResponse({ error: '请求体不是合法 JSON' }, 400);
+      //   }
+      //   const { session_id } = body;
+      //   if (!session_id) {
+      //     return jsonResponse({ error: '请提供 session_id' }, 400);
+      //   }
+      //   const id = env.CHAT_SESSION.idFromName(session_id);
+      //   const stub = env.CHAT_SESSION.get(id);
+      //   return await stub.fetch('http://internal/clear');
+      // }
 
       // 默认欢迎页
       return jsonResponse({
